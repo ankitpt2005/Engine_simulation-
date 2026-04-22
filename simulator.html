@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Engine Simulator</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto+Mono:wght@400;700&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0f172a;
+            color: #f1f5f9;
+            font-family: 'Roboto Mono', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        h1 {
+            font-family: 'Orbitron', sans-serif;
+            color: #00f2fe;
+            margin-top: 20px;
+            text-shadow: 0 0 10px rgba(0, 242, 254, 0.5);
+        }
+
+        .container {
+            display: flex;
+            gap: 30px;
+            margin-top: 20px;
+            background: rgba(30, 41, 59, 0.8);
+            padding: 20px;
+            border-radius: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        canvas {
+            background: #000;
+            border-radius: 10px;
+            border: 1px solid #334155;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            width: 300px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        label {
+            font-weight: bold;
+            color: #94a3b8;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+
+        input[type=range] {
+            width: 100%;
+            cursor: pointer;
+        }
+
+        .val-display {
+            color: #00f2fe;
+            font-weight: bold;
+            float: right;
+        }
+
+        .telemetry {
+            background: #0f172a;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #334155;
+            margin-top: 10px;
+        }
+
+        .telemetry div {
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .telemetry span {
+            color: #10b981;
+            font-weight: bold;
+        }
+
+        .phase-indicator {
+            text-align: center;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 24px;
+            font-weight: bold;
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            transition: background 0.2s, color 0.2s;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>DYNAMIC ENGINE SIMULATOR</h1>
+
+    <div class="container">
+        <canvas id="engineCanvas" width="400" height="600"></canvas>
+
+        <div class="controls">
+            <div class="control-group">
+                <label>Gati / RPM <span id="rpmVal" class="val-display">600</span></label>
+                <input type="range" id="rpmSlider" min="0" max="3000" step="10" value="600">
+            </div>
+
+            <div class="control-group">
+                <label>Stroke Ki Lambai (mm) <span id="strokeVal" class="val-display">86</span></label>
+                <input type="range" id="strokeSlider" min="50" max="150" step="1" value="86">
+            </div>
+
+            <div class="control-group">
+                <label>Conrod Ki Lambai (mm) <span id="conrodVal" class="val-display">140</span></label>
+                <input type="range" id="conrodSlider" min="100" max="250" step="1" value="140">
+            </div>
+
+            <div class="telemetry">
+                <div>Crank Angle: <span id="angleDisplay">0°</span></div>
+                <div>Piston Velocity: <span id="velocityDisplay">0.0 m/s</span></div>
+            </div>
+
+            <div id="phaseBox" class="phase-indicator">WAITING...</div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('engineCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // UI Elements
+        const rpmSlider = document.getElementById('rpmSlider');
+        const strokeSlider = document.getElementById('strokeSlider');
+        const conrodSlider = document.getElementById('conrodSlider');
+        
+        const rpmVal = document.getElementById('rpmVal');
+        const strokeVal = document.getElementById('strokeVal');
+        const conrodVal = document.getElementById('conrodVal');
+        
+        const angleDisplay = document.getElementById('angleDisplay');
+        const velocityDisplay = document.getElementById('velocityDisplay');
+        const phaseBox = document.getElementById('phaseBox');
+
+        // State Variables
+        let crankAngle = 0; // 0 to 720 degrees
+        let lastTime = 0;
+        let lastPistonY = 0;
+
+        // Constants for drawing
+        const scale = 1.5; // pixels per mm
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height * 0.7; // Position crank center near bottom
+        const bore = 86; // Fixed visual bore width in mm
+
+        function updateSimulation(time) {
+            if (!lastTime) lastTime = time;
+            const deltaTime = (time - lastTime) / 1000; // in seconds
+            lastTime = time;
+
+            // Get values from sliders
+            const rpm = parseFloat(rpmSlider.value);
+            const stroke = parseFloat(strokeSlider.value);
+            const conrod = parseFloat(conrodSlider.value);
+
+            // Update UI Labels
+            rpmVal.textContent = rpm;
+            strokeVal.textContent = stroke;
+            conrodVal.textContent = conrod;
+
+            // Calculate Angle Change
+            // RPM / 60 = Revolutions per second. 1 Rev = 360 degrees.
+            const degreesPerSec = (rpm / 60) * 360;
+            crankAngle = (crankAngle + degreesPerSec * deltaTime) % 720;
+            
+            // Physics Math
+            const r = stroke / 2; // crank radius
+            const l = conrod; // connecting rod length
+            const thetaRad = (crankAngle % 360) * (Math.PI / 180);
+
+            // Crank Pin Coordinates (relative to center)
+            const pinX = r * Math.sin(thetaRad);
+            const pinY = -r * Math.cos(thetaRad); // Negative because Y goes down in canvas
+
+            // Piston Y Calculation using Slider-Crank Formula
+            // Distance from crank center to piston pin
+            const pistonDist = r * Math.cos(thetaRad) + Math.sqrt(l * l - Math.pow(r * Math.sin(thetaRad), 2));
+            const pistonY = centerY - (pistonDist * scale);
+            const pistonX = centerX;
+
+            // Calculate Velocity (simple discrete derivative for visual purposes)
+            const velocity = (pistonY - lastPistonY) / (deltaTime || 1) / scale / 1000; // rough m/s
+            lastPistonY = pistonY;
+
+            // Update Telemetry UI
+            angleDisplay.textContent = Math.floor(crankAngle) + '°';
+            velocityDisplay.textContent = Math.abs(velocity).toFixed(2) + ' m/s';
+
+            // Determine Phase & Colors
+            let phaseName = "";
+            let phaseColor = "";
+            let gasColor = "";
+
+            if (crankAngle >= 0 && crankAngle < 180) {
+                phaseName = "INTAKE (Hawa andar)";
+                phaseColor = "#3b82f6"; // Blue
+                gasColor = `rgba(59, 130, 246, ${(crankAngle)/180 * 0.3})`;
+            } else if (crankAngle >= 180 && crankAngle < 360) {
+                phaseName = "COMPRESSION (Dabav)";
+                phaseColor = "#f59e0b"; // Orange
+                gasColor = `rgba(245, 158, 11, ${(crankAngle-180)/180 * 0.6})`;
+            } else if (crankAngle >= 360 && crankAngle < 540) {
+                phaseName = "POWER / COMBUSTION!";
+                phaseColor = "#ef4444"; // Red
+                // Flash effect at the start of power stroke
+                let intensity = 1 - ((crankAngle - 360) / 180);
+                gasColor = `rgba(239, 68, 68, ${intensity})`;
+            } else {
+                phaseName = "EXHAUST (Dhua bahar)";
+                phaseColor = "#64748b"; // Gray
+                gasColor = `rgba(100, 116, 139, ${1 - (crankAngle-540)/180 * 0.5})`;
+            }
+
+            phaseBox.textContent = phaseName;
+            phaseBox.style.color = phaseColor;
+            phaseBox.style.border = `2px solid ${phaseColor}`;
+            phaseBox.style.backgroundColor = `rgba(${hexToRgb(phaseColor)}, 0.1)`;
+
+            // ---------------- DRAWING ----------------
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const vBore = bore * scale;
+            const vStroke = stroke * scale;
+            const tdcY = centerY - ((r + l) * scale); // Top Dead Center
+            const bdcY = centerY - ((l - r) * scale); // Bottom Dead Center
+            const cylHeight = (tdcY - pistonY) + 40; // Space above piston
+
+            // 1. Draw Gases (Volume above piston)
+            ctx.fillStyle = gasColor;
+            ctx.fillRect(centerX - vBore/2, tdcY - 30, vBore, pistonY - (tdcY - 30));
+
+            // 2. Draw Cylinder Block Walls
+            ctx.strokeStyle = "#94a3b8";
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(centerX - vBore/2, tdcY - 30);
+            ctx.lineTo(centerX - vBore/2, bdcY + 50);
+            ctx.moveTo(centerX + vBore/2, tdcY - 30);
+            ctx.lineTo(centerX + vBore/2, bdcY + 50);
+            
+            // Cylinder Head (Top)
+            ctx.moveTo(centerX - vBore/2 - 10, tdcY - 30);
+            ctx.lineTo(centerX + vBore/2 + 10, tdcY - 30);
+            ctx.stroke();
+
+            // 3. Draw Spark Plug
+            ctx.fillStyle = "#fff";
+            ctx.fillRect(centerX - 5, tdcY - 45, 10, 15);
+            ctx.fillStyle = (crankAngle >= 350 && crankAngle <= 370) ? "#fff" : "#444"; // Spark flash
+            ctx.fillRect(centerX - 2, tdcY - 30, 4, 5);
+
+            // 4. Draw Piston
+            const pistonHeight = 40;
+            ctx.fillStyle = "#cbd5e1";
+            ctx.fillRect(centerX - vBore/2 + 2, pistonY, vBore - 4, pistonHeight);
+            
+            // Piston Rings
+            ctx.fillStyle = "#334155";
+            ctx.fillRect(centerX - vBore/2 + 2, pistonY + 5, vBore - 4, 3);
+            ctx.fillRect(centerX - vBore/2 + 2, pistonY + 12, vBore - 4, 3);
+
+            // 5. Draw Connecting Rod
+            ctx.strokeStyle = "#64748b";
+            ctx.lineWidth = 12;
+            ctx.lineCap = "round";
+            ctx.beginPath();
+            ctx.moveTo(pistonX, pistonY + pistonHeight/2); // Piston pin
+            ctx.lineTo(centerX + pinX * scale, centerY + pinY * scale); // Crank pin
+            ctx.stroke();
+
+            // 6. Draw Crank Circle & Arm
+            ctx.strokeStyle = "#475569";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, r * scale, 0, Math.PI * 2);
+            ctx.stroke(); // crank path
+
+            ctx.strokeStyle = "#94a3b8";
+            ctx.lineWidth = 14;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(centerX + pinX * scale, centerY + pinY * scale);
+            ctx.stroke(); // crank arm
+
+            // Pivot Pins (Dots)
+            ctx.fillStyle = "#0f172a";
+            ctx.beginPath(); ctx.arc(centerX, centerY, 5, 0, Math.PI*2); ctx.fill(); // Main bearing
+            ctx.beginPath(); ctx.arc(centerX + pinX * scale, centerY + pinY * scale, 4, 0, Math.PI*2); ctx.fill(); // Crank pin
+            ctx.beginPath(); ctx.arc(pistonX, pistonY + pistonHeight/2, 4, 0, Math.PI*2); ctx.fill(); // Piston pin
+
+            requestAnimationFrame(updateSimulation);
+        }
+
+        // Helper to convert hex color to rgb for opacity usage
+        function hexToRgb(hex) {
+            let result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : "255,255,255";
+        }
+
+        // Start Animation Loop
+        requestAnimationFrame(updateSimulation);
+    </script>
+</body>
+</html>
